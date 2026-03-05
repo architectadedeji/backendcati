@@ -18,7 +18,7 @@ def load_form_schema() -> dict:
     """Load form schema from file."""
     try:
         # Try to load from public folder first
-        schema_path = Path(__file__).parent.parent.parent.parent / "public" / "form_schema_with_nav.json"
+        schema_path = Path(__file__).parent.parent.parent.parent / "streamcati-frontend" / "public" / "form_schema_with_nav.json"
         
         if not schema_path.exists():
             logger.warning(f"Form schema not found at {schema_path}")
@@ -53,7 +53,9 @@ async def get_system_config(
     return {
         "api_version": "1.0.0",
         "environment": settings.environment,
-        "testing_mode": settings.environment == "testing",
+        "testing_mode": settings.testing_mode,
+        "testing_interval_minutes": settings.testing_interval_minutes,
+        "production_interval_months": settings.production_interval_months,
         "cors_origins": settings.CORS_ORIGINS_LIST,
         "features": {
             "authentication": True,

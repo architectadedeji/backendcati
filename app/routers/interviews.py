@@ -8,6 +8,13 @@ import json
 from pathlib import Path
 
 from app.database import get_db
+
+
+def _iso_utc(dt: Optional[datetime]) -> Optional[str]:
+    """Format a datetime as ISO 8601 with Z suffix to indicate UTC."""
+    if dt is None:
+        return None
+    return dt.isoformat() + "Z"
 from app.models.interview import Interview, InterviewRound, Response
 from app.models.contact import Contact
 from app.enums import ContactStatus
@@ -21,7 +28,7 @@ router = APIRouter(prefix="/api/interviews", tags=["interviews"])
 def load_form_schema() -> Optional[dict]:
     """Load form schema from file, return None if not found."""
     try:
-        schema_path = Path(__file__).parent.parent.parent.parent / "public" / "form_schema_with_nav.json"
+        schema_path = Path(__file__).parent.parent.parent.parent / "streamcati-frontend" / "public" / "form_schema_with_nav.json"
         if schema_path.exists():
             with open(schema_path, 'r', encoding='utf-8') as f:
                 return json.load(f)
@@ -47,7 +54,14 @@ async def start_interview(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Contact with ID {contact_id} not found"
         )
-    
+
+    # Block if all rounds are already completed
+    if contact.status == ContactStatus.ALL_ROUNDS_COMPLETED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="All interview rounds have been completed for this contact"
+        )
+
     # Ensure InterviewRound exists for this round
     result = await db.execute(
         select(InterviewRound).where(
@@ -100,15 +114,15 @@ async def start_interview(
         'status': interview.status,
         'stage': interview.stage,
         'current_question_index': interview.current_question_index,
-        'started_at': interview.started_at,
-        'completed_at': interview.completed_at,
+        'started_at': _iso_utc(interview.started_at),
+        'completed_at': _iso_utc(interview.completed_at),
         'decline_reason': interview.decline_reason,
         'xform_data': interview.xform_data,
         'form_schema': form_schema,
-        'created_at': interview.created_at,
-        'updated_at': interview.updated_at,
+        'created_at': _iso_utc(interview.created_at),
+        'updated_at': _iso_utc(interview.updated_at),
     }
-    
+
     return interview_data
 
 
@@ -192,8 +206,8 @@ async def list_submitted_interviews(
             'contact': contact_info,
             'round_number': interview.round_number,
             'status': interview.status,
-            'started_at': interview.started_at.isoformat() if interview.started_at else None,
-            'completed_at': interview.completed_at.isoformat() if interview.completed_at else None,
+            'started_at': _iso_utc(interview.started_at),
+            'completed_at': _iso_utc(interview.completed_at),
             'answered_count': answered_count,
             'xform_data': interview.xform_data,
         })
@@ -239,13 +253,13 @@ async def get_due_rounds(
                     'status': interview.status,
                     'stage': interview.stage,
                     'current_question_index': interview.current_question_index,
-                    'started_at': interview.started_at,
-                    'completed_at': interview.completed_at,
+                    'started_at': _iso_utc(interview.started_at),
+                    'completed_at': _iso_utc(interview.completed_at),
                     'decline_reason': interview.decline_reason,
                     'xform_data': interview.xform_data,
                     'form_schema': None,
-                    'created_at': interview.created_at,
-                    'updated_at': interview.updated_at,
+                    'created_at': _iso_utc(interview.created_at),
+                    'updated_at': _iso_utc(interview.updated_at),
                 }
                 interviews.append(interview_dict)
         
@@ -296,8 +310,13 @@ async def list_interviews(
     if round_number:
         query = query.where(Interview.round_number == round_number)
     
-    # Get total count
-    count_result = await db.execute(select(Interview))
+    # Get total count (apply same filters as main query)
+    count_query = select(Interview)
+    if contact_id:
+        count_query = count_query.where(Interview.contact_id == contact_id)
+    if round_number:
+        count_query = count_query.where(Interview.round_number == round_number)
+    count_result = await db.execute(count_query)
     total = len(count_result.fetchall())
     
     # Apply pagination
@@ -315,13 +334,13 @@ async def list_interviews(
             'status': interview.status,
             'stage': interview.stage,
             'current_question_index': interview.current_question_index,
-            'started_at': interview.started_at,
-            'completed_at': interview.completed_at,
+            'started_at': _iso_utc(interview.started_at),
+            'completed_at': _iso_utc(interview.completed_at),
             'decline_reason': interview.decline_reason,
             'xform_data': interview.xform_data,
             'form_schema': None,
-            'created_at': interview.created_at,
-            'updated_at': interview.updated_at,
+            'created_at': _iso_utc(interview.created_at),
+            'updated_at': _iso_utc(interview.updated_at),
         }
         interview_list.append(interview_dict)
     
@@ -357,15 +376,15 @@ async def get_interview(
         'status': interview.status,
         'stage': interview.stage,
         'current_question_index': interview.current_question_index,
-        'started_at': interview.started_at,
-        'completed_at': interview.completed_at,
+        'started_at': _iso_utc(interview.started_at),
+        'completed_at': _iso_utc(interview.completed_at),
         'decline_reason': interview.decline_reason,
         'xform_data': interview.xform_data,
         'form_schema': form_schema,
-        'created_at': interview.created_at,
-        'updated_at': interview.updated_at,
+        'created_at': _iso_utc(interview.created_at),
+        'updated_at': _iso_utc(interview.updated_at),
     }
-    
+
     return interview_data
 
 
@@ -451,15 +470,15 @@ async def update_interview(
         'status': interview.status,
         'stage': interview.stage,
         'current_question_index': interview.current_question_index,
-        'started_at': interview.started_at.isoformat() if interview.started_at else None,
-        'completed_at': interview.completed_at.isoformat() if interview.completed_at else None,
+        'started_at': _iso_utc(interview.started_at),
+        'completed_at': _iso_utc(interview.completed_at),
         'decline_reason': interview.decline_reason,
         'interview_round': None,
         'responses': [],
         'xform_data': interview.xform_data,
         'form_schema': None,
-        'created_at': interview.created_at.isoformat() if interview.created_at else None,
-        'updated_at': interview.updated_at.isoformat() if interview.updated_at else None,
+        'created_at': _iso_utc(interview.created_at),
+        'updated_at': _iso_utc(interview.updated_at),
     }
     return interview_dict
 
@@ -488,6 +507,21 @@ async def xform_submit(
     interview.xform_data = actual_form_data
     interview.status = 'completed'
     interview.completed_at = datetime.utcnow()
+
+    # Also update the associated InterviewRound status
+    round_result = await db.execute(
+        select(InterviewRound).where(
+            and_(
+                InterviewRound.contact_id == interview.contact_id,
+                InterviewRound.round_number == interview.round_number
+            )
+        )
+    )
+    interview_round = round_result.scalar_one_or_none()
+    if interview_round:
+        interview_round.status = "completed"
+        interview_round.can_start_interview = False
+
     await db.commit()
     await db.refresh(interview)
     
@@ -600,10 +634,10 @@ async def get_contact_round_timings(
             # For all rounds completed, use database if available, otherwise contact created_at
             scheduled_date = None
             if existing_interview and existing_interview.completed_at:
-                scheduled_date = existing_interview.completed_at.isoformat()
+                scheduled_date = _iso_utc(existing_interview.completed_at)
             else:
                 # Safe fallback: use contact creation date (assumes interview happened around signup)
-                scheduled_date = contact.created_at.isoformat()
+                scheduled_date = _iso_utc(contact.created_at)
             
             round_data.update({
                 'status': 'completed',
@@ -615,10 +649,10 @@ async def get_contact_round_timings(
             # For past rounds, use database if available, otherwise contact created_at
             scheduled_date = None
             if existing_interview and existing_interview.completed_at:
-                scheduled_date = existing_interview.completed_at.isoformat()
+                scheduled_date = _iso_utc(existing_interview.completed_at)
             else:
                 # Safe fallback: use contact creation date (assumes interview happened around signup)
-                scheduled_date = contact.created_at.isoformat()
+                scheduled_date = _iso_utc(contact.created_at)
             
             round_data.update({
                 'status': 'completed',
@@ -633,18 +667,18 @@ async def get_contact_round_timings(
                         'status': 'completed',
                         'canStart': False,
                         'message': f'Round {round_num} completed',
-                        'scheduledAt': existing_interview.completed_at.isoformat()
+                        'scheduledAt': _iso_utc(existing_interview.completed_at)
                     })
                 else:
                     round_data.update({
                         'status': 'active',
                         'canStart': True,
                         'message': f'Continue Round {round_num}',
-                        'scheduledAt': existing_interview.started_at.isoformat()
+                        'scheduledAt': _iso_utc(existing_interview.started_at)
                     })
             else:
                 # Round is available to start right now
-                current_time = datetime.utcnow().isoformat()
+                current_time = _iso_utc(datetime.utcnow())
                 round_data.update({
                     'status': 'available',
                     'canStart': True,
@@ -683,8 +717,8 @@ async def get_contact_round_timings(
                         days_from_now = (round_num - current_round) * interval_days
                         future_date = datetime.utcnow() + timedelta(days=days_from_now)
                 
-                round_data['nextAvailableAt'] = future_date.isoformat()
-                round_data['scheduledAt'] = future_date.isoformat()
+                round_data['nextAvailableAt'] = _iso_utc(future_date)
+                round_data['scheduledAt'] = _iso_utc(future_date)
         
         round_timings_list.append(round_data)
     
